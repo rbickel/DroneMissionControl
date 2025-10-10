@@ -114,6 +114,16 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             font-size: 0.9rem;
             transform: translateY(-1px);
         }
+        .drone-icon-wrapper {
+            background: none !important;
+            border: none !important;
+        }
+        .drone-icon-wrapper img {
+            display: block;
+            width: 42px;
+            height: 42px;
+            transform-origin: 50% 50%;
+        }
     </style>
 </head>
 <body>
@@ -131,12 +141,19 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
         }).addTo(map);
 
         const markers = {};
-        const droneIcon = L.icon({
-            iconUrl: 'https://cdn-icons-png.flaticon.com/512/652/652526.png',
-            iconSize: [42, 42],
-            iconAnchor: [21, 21],
-            popupAnchor: [0, -20]
-        });
+        const DRONE_ICON_URL = 'https://cdn-icons-png.flaticon.com/512/1596/1596423.png';
+
+        function createDroneIcon(direction) {
+            const normalized = Number.isFinite(direction) ? direction : 0;
+            const rotation = normalized - 45; // Base image faces north-east (45°)
+            return L.divIcon({
+                html: `<img src="${DRONE_ICON_URL}" style="transform: rotate(${rotation}deg);" alt="drone" />`,
+                className: 'drone-icon-wrapper',
+                iconSize: [42, 42],
+                iconAnchor: [21, 21],
+                popupAnchor: [0, -20],
+            });
+        }
 
         function getBearingArrow(direction) {
             if (!Number.isFinite(direction)) {
@@ -185,6 +202,7 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
                     if (markers[drone.id]) {
                         const marker = markers[drone.id];
                         marker.setLatLng([latVal, lonVal]).setPopupContent(popupContent);
+                        marker.setIcon(createDroneIcon(dirVal));
                         if (marker.getTooltip()) {
                             marker.setTooltipContent(tooltipHtml);
                         } else {
@@ -196,7 +214,7 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
                             });
                         }
                     } else {
-                        const marker = L.marker([latVal, lonVal], { icon: droneIcon }).addTo(map).bindPopup(popupContent);
+                        const marker = L.marker([latVal, lonVal], { icon: createDroneIcon(dirVal) }).addTo(map).bindPopup(popupContent);
                         marker.bindTooltip(tooltipHtml, {
                             permanent: true,
                             direction: 'right',
