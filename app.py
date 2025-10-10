@@ -1,3 +1,4 @@
+import json
 import math
 import threading
 from typing import Dict, List, Optional
@@ -5,7 +6,7 @@ from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 
@@ -56,8 +57,8 @@ def _custom_openapi(request: Optional[Request] = None):
     )
     
     schema["servers"] = [
-        {"url": "http://localhost:8000", "description": "Local development"},
         {"url": "https://rbkl-drone-gps.lemonbush-02b762b9.westeurope.azurecontainerapps.io/", "description": "Production"},
+        {"url": "http://localhost:8000", "description": "Local development"},
     ]
     
     if request is not None:
@@ -219,7 +220,8 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
 @app.get("/openapi.json", include_in_schema=False)
 def get_openapi_spec(request: Request):
     """Serve the generated OpenAPI spec with host-specific server metadata."""
-    return JSONResponse(_custom_openapi(request))
+    schema = _custom_openapi(request)
+    return Response(content=json.dumps(schema, indent=2), media_type="application/json")
 
 
 @app.on_event("shutdown")
