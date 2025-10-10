@@ -18,14 +18,16 @@ class Drone(BaseModel):
     direction: float = Field(0, ge=0, le=359.999, description="Bearing in degrees 0-360")
     base_lat: float = Field(..., ge=-90, le=90)
     base_lon: float = Field(..., ge=-180, le=180)
+    return_to_base: bool = Field(False, description="Whether the drone is in return-to-base mode")
 
 
 class DroneUpdateSpeed(BaseModel):
     speed: float = Field(..., ge=0, description="New speed in m/s")
 
 
-class DroneUpdateDirection(BaseModel):
-    direction: float = Field(..., ge=0, le=359.999, description="New bearing in degrees")
+class DroneUpdateCoordinates(BaseModel):
+    lat: float = Field(..., ge=-90, le=90, description="Target latitude")
+    lon: float = Field(..., ge=-180, le=180, description="Target longitude")
 
 
 class DroneReturnRequest(BaseModel):
@@ -263,6 +265,17 @@ def _start_position_thread():
         POSITION_THREAD.start()
 
 
+def _bearing_between(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return forward azimuth in degrees from point 1 to point 2."""
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    d_lon = math.radians(lon2 - lon1)
+    x = math.sin(d_lon) * math.cos(lat2_rad)
+    y = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(d_lon)
+    bearing = (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+    return bearing
+
+
 @app.get("/", include_in_schema=False, response_class=HTMLResponse)
 def root_page():
     return HTMLResponse(content=MAP_PAGE_HTML)
@@ -286,16 +299,24 @@ def change_speed(drone_id: str, payload: DroneUpdateSpeed):
     if not drone:
         raise HTTPException(status_code=404, detail="Drone not found")
     drone.speed = payload.speed
+    drone.return_to_base = False
     DRONES[drone_id] = drone
     return drone
 
 
-@app.patch("/drones/{drone_id}/direction", response_model=Drone)
-def change_direction(drone_id: str, payload: DroneUpdateDirection):
+@app.patch("/drones/{drone_id}/coordinates", response_model=Drone)
+def adjust_heading_to_coordinates(drone_id: str, payload: DroneUpdateCoordinates):
     drone = DRONES.get(drone_id)
     if not drone:
         raise HTTPException(status_code=404, detail="Drone not found")
-    drone.direction = payload.direction % 360.0
+
+    if math.isclose(drone.lat, payload.lat, abs_tol=1e-6) and math.isclose(drone.lon, payload.lon, abs_tol=1e-6):
+        drone.return_to_base = False
+        DRONES[drone_id] = drone
+        return drone
+
+    drone.direction = _bearing_between(drone.lat, drone.lon, payload.lat, payload.lon)
+    drone.return_to_base = False
     DRONES[drone_id] = drone
     return drone
 
@@ -335,6 +356,7 @@ def return_to_base(drone_id: str, payload: DroneReturnRequest = DroneReturnReque
     if drone.speed == 0:
         drone.speed = 10.0
 
+    drone.return_to_base = True
     DRONES[drone_id] = drone
     return drone
 
