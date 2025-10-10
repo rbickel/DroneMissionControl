@@ -7,7 +7,7 @@ This FastAPI service manages a fleet of simulated drones and provides:
 - GET `/` – Leaflet map that refreshes every second with drone locations, speeds, and heading arrows.
 - GET `/drones` – JSON list of all drones (id, lat, lon, speed, direction, base coordinates).
 - PATCH `/drones/{id}/speed` – Update speed (m/s).
-- PATCH `/drones/{id}/direction` – Update direction (0–359.999° bearing).
+- PATCH `/drones/{id}/coordinates` – Provide target lat/lon; service recalculates heading automatically.
 - POST `/drones/{id}/return-to-base` – Point drone back to its base; optionally override base `[lat, lon]`.
 - POST `/drones` – Register a new drone.
 - DELETE `/drones/{id}` – Remove a drone.
@@ -61,12 +61,12 @@ curl -X PATCH http://localhost:8000/drones/drone-99/speed `
   -d '{"speed": 12}'
 ```
 
-Change direction:
+Fly toward new coordinates:
 
 ```powershell
-curl -X PATCH http://localhost:8000/drones/drone-99/direction `
+curl -X PATCH http://localhost:8000/drones/drone-99/coordinates `
   -H "Content-Type: application/json" `
-  -d '{"direction": 45}'
+  -d '{"lat": 34.20, "lon": -118.15}'
 ```
 
 Return to base (optional override):
@@ -81,5 +81,5 @@ Notes
 
 - Data is stored in-memory and seeded on startup with 15 demo drones distributed across Western Europe; restart to reset state.
 - A background thread advances drone positions every second using their speed and heading (simple planar approximation).
-- Direction recalculation when returning to base uses a great-circle bearing formula; it does not perform navigation or obstacle avoidance.
+- Heading recalculation happens automatically when supplying destination coordinates or returning to base; computations rely on a great-circle bearing approximation and do not handle navigation constraints or obstacle avoidance.
 - Speed is a scalar in m/s; no advanced physics are applied beyond straight-line motion.
