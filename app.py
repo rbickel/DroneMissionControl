@@ -2,7 +2,7 @@ import math
 import threading
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -47,24 +47,26 @@ class DroneCreate(BaseModel):
 app = FastAPI(title="Drone Management API", version="1.0.0")
 
 
-def _custom_openapi():
-    if app.openapi_schema:
-        return app.openapi_schema
+def _custom_openapi(request: Optional[Request] = None):
     schema = get_openapi(
         title=app.title,
         version=app.version,
         description="Manage and track drones in real time.",
         routes=app.routes,
     )
+    
     schema["servers"] = [
         {"url": "http://localhost:8000", "description": "Local development"},
         {"url": "https://rbkl-drone-gps.lemonbush-02b762b9.westeurope.azurecontainerapps.io/", "description": "Production"},
     ]
-    app.openapi_schema = schema
-    return app.openapi_schema
+    
+    if request is not None:
+        base_url = str(request.base_url).rstrip("/")
+        schema["servers"] = [{"url": base_url, "description": "Current host"}]
 
+    return schema
 
-app.openapi = _custom_openapi
+app.openapi = lambda: _custom_openapi()
 
 # In-memory store of drones
 DRONES: Dict[str, Drone] = {}
@@ -215,9 +217,9 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
 
 
 @app.get("/openapi.json", include_in_schema=False)
-def get_openapi_spec():
-    """Serve the generated OpenAPI spec with explicit server metadata."""
-    return JSONResponse(app.openapi())
+def get_openapi_spec(request: Request):
+    """Serve the generated OpenAPI spec with host-specific server metadata."""
+    return JSONResponse(_custom_openapi(request))
 
 
 @app.on_event("shutdown")
@@ -356,9 +358,9 @@ def delete_drone(drone_id: str):
 def seed_data():
     # Seed a few drones for demo
     initial = [
-        Drone(id="Aquila-Berlin", lat=52.5200, lon=13.4050, speed=15.0, direction=120.0, base_lat=52.3667, base_lon=13.5033),
-        Drone(id="Valkyrie-Munich", lat=48.1351, lon=11.5820, speed=12.0, direction=210.0, base_lat=48.3538, base_lon=11.7861),
-        Drone(id="Lupus-Hamburg", lat=53.5511, lon=9.9937, speed=10.0, direction=300.0, base_lat=53.6294, base_lon=9.9882),
+        Drone(id="Aquila-Berlin", lat=52.5200, lon=13.4050, speed=45.0, direction=120.0, base_lat=52.3667, base_lon=13.5033),
+        Drone(id="Valkyrie-Munich", lat=48.1351, lon=11.5820, speed=60.0, direction=210.0, base_lat=48.3538, base_lon=11.7861),
+        Drone(id="Lupus-Hamburg", lat=53.5511, lon=9.9937, speed=65.0, direction=300.0, base_lat=53.6294, base_lon=9.9882),
     ]
     for d in initial:
         DRONES[d.id] = d
