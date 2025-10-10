@@ -358,9 +358,21 @@ def delete_drone(drone_id: str):
 def seed_data():
     # Seed a few drones for demo
     initial = [
-        Drone(id="Aquila-Berlin", lat=52.5200, lon=13.4050, speed=45.0, direction=120.0, base_lat=52.3667, base_lon=13.5033),
-        Drone(id="Valkyrie-Munich", lat=48.1351, lon=11.5820, speed=60.0, direction=210.0, base_lat=48.3538, base_lon=11.7861),
-        Drone(id="Lupus-Hamburg", lat=53.5511, lon=9.9937, speed=65.0, direction=300.0, base_lat=53.6294, base_lon=9.9882),
+        Drone(id="Aquila", lat=52.5200, lon=13.4050, speed=45.0, direction=120.0, base_lat=52.3667, base_lon=13.5033),
+        Drone(id="Valkyrie", lat=48.1351, lon=11.5820, speed=60.0, direction=210.0, base_lat=48.3538, base_lon=11.7861),
+        Drone(id="Lupus", lat=53.5511, lon=9.9937, speed=65.0, direction=300.0, base_lat=53.6294, base_lon=9.9882),
+        Drone(id="Orion", lat=48.8566, lon=2.3522, speed=55.0, direction=140.0, base_lat=48.7262, base_lon=2.3652),
+        Drone(id="Nemesis", lat=45.7640, lon=4.8357, speed=52.0, direction=185.0, base_lat=45.7256, base_lon=4.9443),
+        Drone(id="Aether", lat=43.2965, lon=5.3698, speed=47.0, direction=95.0, base_lat=43.4393, base_lon=5.2228),
+        Drone(id="Cerberus", lat=51.5074, lon=-0.1278, speed=58.0, direction=60.0, base_lat=51.4700, base_lon=-0.4543),
+        Drone(id="Hydra", lat=53.4808, lon=-2.2426, speed=50.0, direction=310.0, base_lat=53.3650, base_lon=-2.2790),
+        Drone(id="Pegasus", lat=52.3676, lon=4.9041, speed=49.0, direction=45.0, base_lat=52.3105, base_lon=4.7683),
+        Drone(id="Gryphon", lat=50.8503, lon=4.3517, speed=53.0, direction=75.0, base_lat=50.9010, base_lon=4.4844),
+        Drone(id="Minerva", lat=47.3769, lon=8.5417, speed=57.0, direction=25.0, base_lat=47.4647, base_lon=8.5492),
+        Drone(id="Phoenix", lat=40.4168, lon=-3.7038, speed=62.0, direction=220.0, base_lat=40.4983, base_lon=-3.5676),
+        Drone(id="Atlas", lat=38.7223, lon=-9.1393, speed=48.0, direction=250.0, base_lat=38.7742, base_lon=-9.1342),
+        Drone(id="Vortex", lat=53.3498, lon=-6.2603, speed=54.0, direction=15.0, base_lat=53.4213, base_lon=-6.2701),
+        Drone(id="Odin", lat=59.9139, lon=10.7522, speed=46.0, direction=330.0, base_lat=60.1976, base_lon=11.1004),
     ]
     for d in initial:
         DRONES[d.id] = d
