@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import threading
 from typing import Dict, List, Optional
 
@@ -8,6 +9,14 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
+
+# Azure AI Foundry imports (optional - only if credentials configured)
+try:
+    from azure.ai.projects import AIProjectClient
+    from azure.identity import DefaultAzureCredential
+    AZURE_AI_AVAILABLE = True
+except ImportError:
+    AZURE_AI_AVAILABLE = False
 
 
 class Drone(BaseModel):
@@ -47,7 +56,20 @@ class DroneCreate(BaseModel):
     direction: float = 0
 
 
+class ChatMessage(BaseModel):
+    message: str = Field(..., description="User message to send to the AI agent")
+
+
+class ChatResponse(BaseModel):
+    response: str = Field(..., description="AI agent response")
+    error: Optional[str] = Field(None, description="Error message if any")
+
+
 app = FastAPI(title="Drone Management API", version="1.0.0")
+
+# Azure AI Foundry client (initialized if credentials are available)
+azure_ai_client = None
+azure_agent_name: Optional[str] = None
 
 
 def _custom_openapi(request: Optional[Request] = None):
@@ -124,6 +146,123 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             height: 42px;
             transform-origin: 50% 50%;
         }
+        /* Chat Widget Styles */
+        #chat-widget {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            font-family: Arial, sans-serif;
+        }
+        #chat-toggle {
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+        }
+        #chat-toggle:hover {
+            background: #0056b3;
+            transform: scale(1.05);
+        }
+        #chat-container {
+            display: none;
+            position: absolute;
+            bottom: 70px;
+            right: 0;
+            width: 350px;
+            height: 500px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #chat-container.open {
+            display: flex;
+        }
+        #chat-header {
+            background: #007bff;
+            color: white;
+            padding: 15px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #chat-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+        }
+        #chat-messages {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            background: #f5f5f5;
+        }
+        .chat-message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        .chat-message.user {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        .chat-message.agent {
+            background: white;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        .chat-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        #chat-input-container {
+            display: flex;
+            padding: 15px;
+            background: white;
+            border-top: 1px solid #ddd;
+        }
+        #chat-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            outline: none;
+            font-size: 14px;
+        }
+        #chat-send {
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            margin-left: 10px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #chat-send:hover {
+            background: #0056b3;
+        }
+        #chat-send:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -132,18 +271,43 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
         <h2>Drone Fleet</h2>
         <p>Tracking live positions over Germany.</p>
     </div>
+    
+    <!-- Chat Widget -->
+    <div id=\"chat-widget\">
+        <button id=\"chat-toggle\" title=\"Chat with DroneOps AI\">💬</button>
+        <div id=\"chat-container\">
+            <div id=\"chat-header\">
+                <span>DroneOps AI Assistant</span>
+                <button id=\"chat-close\">&times;</button>
+            </div>
+            <div id=\"chat-messages\"></div>
+            <div id=\"chat-input-container\">
+                <input type=\"text\" id=\"chat-input\" placeholder=\"Ask about the drone fleet...\" />
+                <button id=\"chat-send\">➤</button>
+            </div>
+        </div>
+    </div>
+    
     <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\" crossorigin=\"\"></script>
     <script>
-        const map = L.map('map').setView([51.1657, 10.4515], 6);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
-
-        const markers = {};
+        // Initialize map and markers (only if Leaflet loaded successfully)
+        let map, markers = {};
         const DRONE_ICON_URL = 'https://cdn-icons-png.flaticon.com/512/1596/1596423.png';
+        
+        if (typeof L !== 'undefined') {
+            try {
+                map = L.map('map').setView([51.1657, 10.4515], 6);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap contributors'
+                }).addTo(map);
+            } catch (e) {
+                console.error('Failed to initialize map:', e);
+            }
+        }
 
         function createDroneIcon(direction) {
+            if (typeof L === 'undefined') return null;
             const normalized = Number.isFinite(direction) ? direction : 0;
             const rotation = normalized - 45; // Base image faces north-east (45°)
             return L.divIcon({
@@ -181,6 +345,7 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
         }
 
         async function refreshDrones() {
+            if (typeof L === 'undefined' || !map) return; // Skip if Leaflet not loaded
             try {
                 const response = await fetch('/drones');
                 if (!response.ok) {
@@ -229,8 +394,85 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             }
         }
 
-        refreshDrones();
-        setInterval(refreshDrones, 1000);
+        // Only refresh drones if map is available
+        if (map) {
+            refreshDrones();
+            setInterval(refreshDrones, 1000);
+        }
+
+        // Chat Widget JavaScript
+        const chatToggle = document.getElementById('chat-toggle');
+        const chatContainer = document.getElementById('chat-container');
+        const chatClose = document.getElementById('chat-close');
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const chatSend = document.getElementById('chat-send');
+
+        function toggleChat() {
+            chatContainer.classList.toggle('open');
+            if (chatContainer.classList.contains('open')) {
+                chatInput.focus();
+            }
+        }
+
+        function closeChat() {
+            chatContainer.classList.remove('open');
+        }
+
+        function addMessage(text, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${type}`;
+            messageDiv.textContent = text;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const message = chatInput.value.trim();
+            if (!message) return;
+
+            // Add user message to chat
+            addMessage(message, 'user');
+            chatInput.value = '';
+            chatSend.disabled = true;
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: message }),
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    addMessage(data.error, 'error');
+                } else {
+                    addMessage(data.response, 'agent');
+                }
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                chatSend.disabled = false;
+                chatInput.focus();
+            }
+        }
+
+        chatToggle.addEventListener('click', toggleChat);
+        chatClose.addEventListener('click', closeChat);
+        chatSend.addEventListener('click', sendMessage);
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Add welcome message
+        setTimeout(() => {
+            addMessage('Hello! I\\'m the DroneOps AI Assistant. Ask me about the drone fleet or how to control drones.', 'agent');
+        }, 500);
     </script>
 </body>
 </html>
@@ -420,3 +662,68 @@ def seed_data():
         DRONES[d.id] = d
 
     _start_position_thread()
+    _init_azure_ai_client()
+
+
+def _init_azure_ai_client():
+    """Initialize Azure AI Foundry client if credentials are configured."""
+    global azure_ai_client, azure_agent_name
+    
+    if not AZURE_AI_AVAILABLE:
+        print("Azure AI SDK not available. Chat feature will be disabled.")
+        return
+    
+    # Check for required environment variables
+    project_connection_string = os.getenv("AZURE_AI_PROJECT_CONNECTION_STRING")
+    azure_agent_name = os.getenv("AZURE_AI_AGENT_NAME", "DroneOps Copilot")
+    
+    if not project_connection_string:
+        print("Azure AI credentials not configured. Chat feature will be disabled.")
+        print("Set AZURE_AI_PROJECT_CONNECTION_STRING and AZURE_AI_AGENT_NAME environment variables to enable.")
+        return
+    
+    try:
+        # Initialize Azure AI client with DefaultAzureCredential
+        azure_ai_client = AIProjectClient.from_connection_string(
+            conn_str=project_connection_string,
+            credential=DefaultAzureCredential()
+        )
+        print(f"Azure AI Foundry client initialized successfully. Agent: {azure_agent_name}")
+    except Exception as e:
+        print(f"Failed to initialize Azure AI Foundry client: {e}")
+        azure_ai_client = None
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat_with_agent(payload: ChatMessage):
+    """Send a message to the Azure AI Foundry agent and get a response."""
+    if not AZURE_AI_AVAILABLE:
+        return ChatResponse(
+            response="",
+            error="Azure AI SDK is not installed. Install 'azure-ai-projects' and 'azure-identity' packages."
+        )
+    
+    if azure_ai_client is None:
+        return ChatResponse(
+            response="",
+            error="Azure AI Foundry is not configured. Please set the required environment variables."
+        )
+    
+    try:
+        # Call the Azure AI agent
+        # Note: The actual API call depends on the Azure AI Foundry SDK version and agent configuration
+        # This is a placeholder implementation that should be adjusted based on the actual SDK
+        response = azure_ai_client.agents.create_thread_and_run(
+            agent_id=azure_agent_name,
+            messages=[{"role": "user", "content": payload.message}]
+        )
+        
+        # Extract the response text
+        response_text = response.messages[-1].content if response.messages else "No response from agent"
+        
+        return ChatResponse(response=response_text)
+    except Exception as e:
+        return ChatResponse(
+            response="",
+            error=f"Error communicating with Azure AI agent: {str(e)}"
+        )
