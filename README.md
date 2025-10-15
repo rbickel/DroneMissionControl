@@ -12,6 +12,7 @@ This FastAPI service manages a fleet of simulated drones and provides:
 - POST `/drones` – Register a new drone.
 - DELETE `/drones/{id}` – Remove a drone.
 - GET `/swagger` – Swagger UI backed by `/openapi.json`.
+- POST `/chat` – Chat with an Azure AI Foundry agent (requires configuration).
 
 Docs & tooling
 
@@ -76,6 +77,24 @@ curl -X POST http://localhost:8000/drones/drone-99/return-to-base `
   -H "Content-Type: application/json" `
   -d '{"base": [33.94, -118.40]}'
 ```
+
+AI Chat Assistant
+
+The application includes a chat widget in the lower right corner that can connect to an Azure AI Foundry agent:
+
+- Click the 💬 button to open/close the chat interface
+- The chat is collapsible and expandable for easy interaction
+- Requires Azure AI Foundry configuration (see `.env.example`)
+
+To enable the AI chat feature:
+
+1. Copy `.env.example` to `.env`
+2. Set your Azure AI Foundry credentials:
+   - `AZURE_AI_PROJECT_CONNECTION_STRING` – Your Azure AI project connection string
+   - `AZURE_AI_AGENT_NAME` – The name of your deployed agent (default: "DroneOps Copilot")
+3. Restart the application
+
+If Azure credentials are not configured, the chat widget will still appear but will show an error message when attempting to send messages.
 
 Notes
 
