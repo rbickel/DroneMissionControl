@@ -77,6 +77,39 @@ curl -X POST http://localhost:8000/drones/drone-99/return-to-base `
   -d '{"base": [33.94, -118.40]}'
 ```
 
+MCP Server
+
+An MCP (Model Context Protocol) server is mounted on the same FastAPI app at `/mcp`, so no separate process is needed.
+
+The MCP endpoint is available at `http://localhost:8000/mcp` (Streamable HTTP transport) once the API is running.
+
+**VS Code integration** – add to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "drone-mission-control": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+**Standalone mode** (stdio/SSE) is also supported for other clients:
+
+```powershell
+pip install -r requirements.txt
+
+# stdio transport (for Claude Desktop)
+python mcp_server.py
+
+# SSE transport on port 8001
+python mcp_server.py --transport sse --port 8001
+```
+
+**Available tools:** `list_drones`, `get_drone`, `change_speed`, `send_drone_to_coordinates`, `return_to_base`, `create_drone`, `delete_drone`.
+
 Notes
 
 - Data is stored in-memory and seeded on startup with 15 demo drones distributed across Western Europe; restart to reset state.

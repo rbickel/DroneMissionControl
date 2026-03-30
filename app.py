@@ -1,6 +1,7 @@
 import json
 import math
 import threading
+from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -47,7 +48,25 @@ class DroneCreate(BaseModel):
     direction: float = 0
 
 
-app = FastAPI(title="Drone Management API", version="1.0.0")
+# Mount MCP server at /mcp
+from mcp_server import mcp as drone_mcp
+
+_mcp_http_app = drone_mcp.streamable_http_app()
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    seed_data()
+    async with drone_mcp.session_manager.run():
+        yield
+    stop_updater()
+
+
+app = FastAPI(title="Drone Management API", version="1.0.0", lifespan=_lifespan)
+
+# Expose MCP at /mcp by forwarding to the streamable HTTP app's internal handler
+_mcp_route = _mcp_http_app.routes[0]  # the /mcp route from the Starlette sub-app
+app.routes.insert(0, _mcp_route)
 
 
 def _custom_openapi(request: Optional[Request] = None):
@@ -244,7 +263,6 @@ def get_openapi_spec(request: Request):
     return Response(content=json.dumps(schema, indent=2), media_type="application/json")
 
 
-@app.on_event("shutdown")
 def stop_updater():
     global POSITION_THREAD
     POSITION_THREAD_STOP.set()
@@ -396,7 +414,6 @@ def delete_drone(drone_id: str):
     return None
 
 
-@app.on_event("startup")
 def seed_data():
     # Seed a few drones for demo
     initial = [

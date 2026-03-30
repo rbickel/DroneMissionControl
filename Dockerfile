@@ -23,5 +23,5 @@ COPY . .
 # Expose FastAPI default port
 EXPOSE 8000
 
-# Start Uvicorn with reload disabled for production container
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start Uvicorn with proxy header support for Azure Container Apps
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
