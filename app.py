@@ -174,17 +174,18 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             100% { opacity: 0.35; }
         }
         @keyframes storm-spin {
-            from { transform: translate(-50%, -50%) rotate(0deg); }
-            to   { transform: translate(-50%, -50%) rotate(360deg); }
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
         }
         .storm-eye-icon {
             background: none !important;
             border: none !important;
         }
         .storm-spiral {
+            display: block;
             width: 60px;
             height: 60px;
-            transform-origin: 50% 50%;
+            transform-origin: center center;
             animation: storm-spin 3s linear infinite;
         }
     </style>
