@@ -22,6 +22,20 @@ class Drone(BaseModel):
     return_to_base: bool = Field(False, description="Whether the drone is in return-to-base mode")
 
 
+class Storm(BaseModel):
+    id: str
+    name: str = Field(..., description="Human-readable storm name")
+    lat: float = Field(..., ge=-90, le=90, description="Eye latitude")
+    lon: float = Field(..., ge=-180, le=180, description="Eye longitude")
+    speed: float = Field(0, ge=0, description="Translational speed in m/s")
+    direction: float = Field(0, ge=0, le=359.999, description="Movement heading in degrees")
+    wind_speed_kmh: float = Field(0, ge=0, description="Max sustained wind speed in km/h")
+    category: int = Field(1, ge=1, le=5, description="Saffir-Simpson category 1-5")
+    eye_radius_km: float = Field(30, ge=5, description="Eye radius in km")
+    inner_band_radius_km: float = Field(150, ge=20, description="Inner rain-band radius in km")
+    outer_band_radius_km: float = Field(400, ge=50, description="Outer storm-band radius in km")
+
+
 class DroneUpdateSpeed(BaseModel):
     speed: float = Field(..., ge=0, description="New speed in m/s")
 
@@ -90,8 +104,9 @@ def _custom_openapi(request: Optional[Request] = None):
 
 app.openapi = lambda: _custom_openapi()
 
-# In-memory store of drones
+# In-memory store of drones and storms
 DRONES: Dict[str, Drone] = {}
+STORMS: Dict[str, Storm] = {}
 UPDATE_INTERVAL_SECONDS = 1.0
 METERS_PER_DEGREE_LAT = 111_111.0
 POSITION_THREAD_STOP = threading.Event()
@@ -116,6 +131,7 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             border-radius: 8px;
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
             font-family: Arial, sans-serif;
+            z-index: 1000;
         }
         .info-panel h2 { margin: 0 0 0.5rem 0; font-size: 1.1rem; }
         .info-panel p { margin: 0; font-size: 0.9rem; }
@@ -126,6 +142,15 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             padding: 4px 6px;
             border-radius: 4px;
             border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .storm-label {
+            background: rgba(180, 0, 0, 0.85);
+            color: #fff;
+            font-size: 0.8rem;
+            padding: 5px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 80, 80, 0.5);
+            font-weight: bold;
         }
         .arrow {
             display: inline-block;
@@ -142,6 +167,25 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             width: 42px;
             height: 42px;
             transform-origin: 50% 50%;
+        }
+        @keyframes storm-pulse {
+            0% { opacity: 0.35; }
+            50% { opacity: 0.55; }
+            100% { opacity: 0.35; }
+        }
+        @keyframes storm-spin {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to   { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        .storm-eye-icon {
+            background: none !important;
+            border: none !important;
+        }
+        .storm-spiral {
+            width: 60px;
+            height: 60px;
+            transform-origin: 50% 50%;
+            animation: storm-spin 3s linear infinite;
         }
     </style>
 </head>
@@ -248,8 +292,154 @@ MAP_PAGE_HTML = """<!DOCTYPE html>
             }
         }
 
+        // --- Storm rendering ---
+        const stormLayers = {};
+
+        function kmToMeters(km) { return km * 1000; }
+
+        function getCategoryColor(cat) {
+            const colors = {
+                1: '#FFD700',
+                2: '#FFA500',
+                3: '#FF4500',
+                4: '#DC143C',
+                5: '#8B0000',
+            };
+            return colors[cat] || '#FF4500';
+        }
+
+        function createStormSpiralSvg(color) {
+            return `<svg class="storm-spiral" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <path d="M50,50 Q50,20 30,15 Q10,10 15,35 Q20,60 50,50" fill="none" stroke="${color}" stroke-width="3" opacity="0.9"/>
+                <path d="M50,50 Q50,80 70,85 Q90,90 85,65 Q80,40 50,50" fill="none" stroke="${color}" stroke-width="3" opacity="0.9"/>
+                <path d="M50,50 Q20,50 15,30 Q10,10 35,15 Q60,20 50,50" fill="none" stroke="${color}" stroke-width="2.5" opacity="0.7"/>
+                <path d="M50,50 Q80,50 85,70 Q90,90 65,85 Q40,80 50,50" fill="none" stroke="${color}" stroke-width="2.5" opacity="0.7"/>
+                <circle cx="50" cy="50" r="6" fill="${color}" opacity="0.8"/>
+                <circle cx="50" cy="50" r="3" fill="white" opacity="0.9"/>
+            </svg>`;
+        }
+
+        async function refreshStorms() {
+            try {
+                const response = await fetch('/storms');
+                if (!response.ok) return;
+                const storms = await response.json();
+
+                // Remove layers for storms no longer present
+                const currentIds = new Set(storms.map(s => s.id));
+                Object.keys(stormLayers).forEach(id => {
+                    if (!currentIds.has(id)) {
+                        stormLayers[id].forEach(layer => map.removeLayer(layer));
+                        delete stormLayers[id];
+                    }
+                });
+
+                storms.forEach(storm => {
+                    const color = getCategoryColor(storm.category);
+
+                    // Remove old layers for this storm
+                    if (stormLayers[storm.id]) {
+                        stormLayers[storm.id].forEach(layer => map.removeLayer(layer));
+                    }
+
+                    const layers = [];
+
+                    // Outer band
+                    const outer = L.circle([storm.lat, storm.lon], {
+                        radius: kmToMeters(storm.outer_band_radius_km),
+                        color: color,
+                        weight: 1.5,
+                        fillColor: color,
+                        fillOpacity: 0.08,
+                        dashArray: '8 6',
+                        interactive: false,
+                    }).addTo(map);
+                    layers.push(outer);
+
+                    // Inner band
+                    const inner = L.circle([storm.lat, storm.lon], {
+                        radius: kmToMeters(storm.inner_band_radius_km),
+                        color: color,
+                        weight: 2,
+                        fillColor: color,
+                        fillOpacity: 0.15,
+                        dashArray: '5 4',
+                        interactive: false,
+                    }).addTo(map);
+                    layers.push(inner);
+
+                    // Danger zone (eye wall)
+                    const eyeWall = L.circle([storm.lat, storm.lon], {
+                        radius: kmToMeters(storm.eye_radius_km * 2.5),
+                        color: color,
+                        weight: 2.5,
+                        fillColor: color,
+                        fillOpacity: 0.25,
+                        interactive: false,
+                    }).addTo(map);
+                    layers.push(eyeWall);
+
+                    // Eye
+                    const eye = L.circle([storm.lat, storm.lon], {
+                        radius: kmToMeters(storm.eye_radius_km),
+                        color: '#fff',
+                        weight: 2,
+                        fillColor: '#222',
+                        fillOpacity: 0.3,
+                        interactive: false,
+                    }).addTo(map);
+                    layers.push(eye);
+
+                    // Spinning icon at center
+                    const spiralIcon = L.divIcon({
+                        html: createStormSpiralSvg(color),
+                        className: 'storm-eye-icon',
+                        iconSize: [60, 60],
+                        iconAnchor: [30, 30],
+                    });
+                    const centerMarker = L.marker([storm.lat, storm.lon], { icon: spiralIcon, interactive: true }).addTo(map);
+
+                    const arrow = getBearingArrow(storm.direction);
+                    const popupHtml = `<strong>\\u{1F300} ${storm.name}</strong><br/>`
+                        + `Category: <strong>${storm.category}</strong> (Saffir-Simpson)<br/>`
+                        + `Winds: <strong>${storm.wind_speed_kmh.toFixed(0)} km/h</strong><br/>`
+                        + `Position: ${storm.lat.toFixed(4)}°N, ${storm.lon.toFixed(4)}°E<br/>`
+                        + `Moving: ${storm.direction.toFixed(0)}° ${arrow} at ${(storm.speed * 3.6).toFixed(1)} km/h<br/>`
+                        + `Eye: ${storm.eye_radius_km} km &middot; Inner: ${storm.inner_band_radius_km} km &middot; Outer: ${storm.outer_band_radius_km} km`;
+                    centerMarker.bindPopup(popupHtml);
+
+                    const tooltipHtml = `\\u{1F300} ${storm.name} (Cat ${storm.category})<br/>`
+                        + `${storm.wind_speed_kmh.toFixed(0)} km/h winds ${arrow}`;
+                    centerMarker.bindTooltip(tooltipHtml, {
+                        permanent: true,
+                        direction: 'top',
+                        offset: [0, -35],
+                        className: 'storm-label',
+                    });
+                    layers.push(centerMarker);
+
+                    // Direction indicator line (projected path ~ 200km)
+                    const pathLen = 200;
+                    const bearingRad = storm.direction * Math.PI / 180;
+                    const dLat = (pathLen / 111.111) * Math.cos(bearingRad);
+                    const dLon = (pathLen / (111.111 * Math.cos(storm.lat * Math.PI / 180))) * Math.sin(bearingRad);
+                    const projLine = L.polyline(
+                        [[storm.lat, storm.lon], [storm.lat + dLat, storm.lon + dLon]],
+                        { color: color, weight: 3, dashArray: '10 8', opacity: 0.7, interactive: false }
+                    ).addTo(map);
+                    layers.push(projLine);
+
+                    stormLayers[storm.id] = layers;
+                });
+            } catch (error) {
+                console.error('Failed to refresh storms', error);
+            }
+        }
+
         refreshDrones();
+        refreshStorms();
         setInterval(refreshDrones, 1000);
+        setInterval(refreshStorms, 1000);
     </script>
 </body>
 </html>
@@ -274,6 +464,7 @@ def stop_updater():
 def _update_positions_loop():
     """Advance drone positions at a fixed cadence based on heading and speed."""
     while not POSITION_THREAD_STOP.wait(UPDATE_INTERVAL_SECONDS):
+        # Update drone positions
         for drone_id, drone in list(DRONES.items()):
             if drone.speed <= 0:
                 continue
@@ -290,6 +481,21 @@ def _update_positions_loop():
             drone.lat = new_lat
             drone.lon = new_lon
             DRONES[drone_id] = drone
+
+        # Update storm positions
+        for storm_id, storm in list(STORMS.items()):
+            if storm.speed <= 0:
+                continue
+
+            distance = storm.speed * UPDATE_INTERVAL_SECONDS
+            bearing_rad = math.radians(storm.direction)
+            delta_lat = (distance * math.cos(bearing_rad)) / METERS_PER_DEGREE_LAT
+            meters_per_degree_lon = METERS_PER_DEGREE_LAT * max(math.cos(math.radians(storm.lat)), 1e-6)
+            delta_lon = (distance * math.sin(bearing_rad)) / meters_per_degree_lon
+
+            storm.lat = max(min(storm.lat + delta_lat, 90.0), -90.0)
+            storm.lon = (storm.lon + delta_lon + 180.0) % 360.0 - 180.0
+            STORMS[storm_id] = storm
 
 
 def _start_position_thread():
@@ -327,6 +533,21 @@ def swagger_ui():
 def list_drones():
     """Return all drones with position, speed, and direction."""
     return list(DRONES.values())
+
+
+@app.get("/storms", response_model=List[Storm])
+def list_storms():
+    """Return all active storms with position, speed, wind, and radii."""
+    return list(STORMS.values())
+
+
+@app.get("/storms/{storm_id}", response_model=Storm)
+def get_storm(storm_id: str):
+    """Return a single storm by ID."""
+    storm = STORMS.get(storm_id)
+    if not storm:
+        raise HTTPException(status_code=404, detail="Storm not found")
+    return storm
 
 
 @app.patch("/drones/{drone_id}/speed", response_model=Drone)
@@ -414,6 +635,27 @@ def delete_drone(drone_id: str):
     return None
 
 
+def _seed_storms():
+    """Seed a demo typhoon for the mission control scenario."""
+    storms = [
+        Storm(
+            id="typhoon-hailong",
+            name="Typhoon Hailong",
+            lat=45.0,
+            lon=-5.0,
+            speed=7.5,
+            direction=42.0,
+            wind_speed_kmh=195.0,
+            category=3,
+            eye_radius_km=35,
+            inner_band_radius_km=150,
+            outer_band_radius_km=450,
+        ),
+    ]
+    for s in storms:
+        STORMS[s.id] = s
+
+
 def seed_data():
     # Seed a few drones for demo
     initial = [
@@ -436,4 +678,5 @@ def seed_data():
     for d in initial:
         DRONES[d.id] = d
 
+    _seed_storms()
     _start_position_thread()

@@ -209,6 +209,41 @@ async def delete_drone(drone_id: str) -> str:
     return f"Drone '{drone_id}' deleted. {msg}"
 
 
+def _format_storm(s: dict) -> str:
+    return (
+        f"Storm {s['name']} (id={s['id']}): "
+        f"eye at lat={s['lat']:.4f}, lon={s['lon']:.4f}, "
+        f"moving {s['direction']:.1f}° at {s['speed']:.1f} m/s ({s['speed']*3.6:.1f} km/h), "
+        f"category {s['category']}, max winds {s['wind_speed_kmh']:.0f} km/h, "
+        f"eye radius {s['eye_radius_km']} km, "
+        f"inner bands {s['inner_band_radius_km']} km, "
+        f"outer bands {s['outer_band_radius_km']} km"
+    )
+
+
+@mcp.tool()
+async def list_storms() -> str:
+    """List all active storms/typhoons with position, category, wind speed, movement, and radii."""
+    storms = await _api_get("/storms")
+    if not storms:
+        return "No active storms."
+    return "\n".join(_format_storm(s) for s in storms)
+
+
+@mcp.tool()
+async def get_storm(storm_id: str) -> str:
+    """Get details for a specific storm by ID.
+
+    Args:
+        storm_id: The unique identifier of the storm (e.g. "typhoon-hailong").
+    """
+    try:
+        storm = await _api_get(f"/storms/{storm_id}")
+        return _format_storm(storm)
+    except Exception:
+        return f"Storm '{storm_id}' not found."
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
